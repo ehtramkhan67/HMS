@@ -1,0 +1,18 @@
+{
+  "name": "hms-postgres-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PostgreSQL API for Cadet College Kohat HMS — cadet directory lookup, bulk import, annual entry turnover",
+  "scripts": {
+    "start": "node server.js",
+    "db:init": "node scripts/init-db.js",
+    "db:import": "node scripts/import-cadets.js",
+    "turnover": "node scripts/turnover.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}
