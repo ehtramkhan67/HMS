@@ -44,7 +44,7 @@ export const allBeds = wards.flatMap(w => generateBeds(w));
 // Live auto-refresh: replace the bed-state map and re-apply it to the
 // generated bed objects so Ward & Beds (already mounted) shows remote
 // admissions/discharges without a reload.
-registerMap('bedState', (merged) => {
+registerMap('bedState', bedState, (merged) => {
   for (const k of Object.keys(bedState)) delete bedState[k];
   Object.assign(bedState, merged);
   for (const bed of allBeds) {

@@ -29,6 +29,11 @@ import { useRef, useEffect } from 'react';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 const DIRTY_KEY = 'cchms_sync_dirty_v1';
+// Set after the first successful hydrate: legacy localStorage data has
+// been pushed to the DB by then, so from then on a clean collection is
+// exactly the server state (records missing there were deleted on
+// another device and must not be re-uploaded).
+const MIGRATED_KEY = 'cchms_sync_migrated_v1';
 
 /**
  * name  → collection name on the server (must match the backend whitelist)
@@ -67,9 +72,22 @@ export function registerList(name, arr) {
   registry.set(name, { arr });
 }
 
-/** Register a custom applier — used by the map-shaped collections. */
-export function registerMap(name, apply) {
-  registry.set(name, { apply });
+/** Register a custom applier — used by the map-shaped collections.
+ *  `source` is the object the module owns so hydrate can detect when
+ *  another tab changed it behind this tab's back. */
+export function registerMap(name, source, apply) {
+  registry.set(name, { source, apply });
+}
+
+/** JSON of the registered in-memory state, or null when not registered. */
+function memoryJson(col) {
+  const reg = registry.get(col.name);
+  if (!reg) return null;
+  try {
+    if (reg.source) return JSON.stringify(reg.source);
+    if (reg.arr) return JSON.stringify(reg.arr);
+  } catch { /* circular / huge — ignore */ }
+  return null;
 }
 
 function applyToMemory(col, merged) {
@@ -86,7 +104,9 @@ function applyToMemory(col, merged) {
     if (!m || m.id == null) return m;
     const existing = byId.get(String(m.id));
     if (!existing) return m;
-    for (const k of Object.keys(existing)) if (!(k in m)) delete existing[k];
+    // Replace contents key-for-key in the merged order so the in-memory
+    // JSON matches `merged` exactly (avoids a false "changed" every poll).
+    for (const k of Object.keys(existing)) delete existing[k];
     Object.assign(existing, m);
     return existing;
   });
@@ -181,9 +201,14 @@ async function pushRows(col, rows, signal) {
 }
 
 // Push one collection now; update the dirty flag on success/failure.
+// pushTimes records when each collection last landed on the server so
+// hydrate can detect a server snapshot that went stale mid-flight.
+const pushTimes = new Map();
+
 async function pushCollection(col, rows) {
   try {
     await pushRows(col, rows);
+    pushTimes.set(col.name, Date.now());
     if (dirty().delete(col.name)) persistDirty();
     return true;
   } catch (err) {
@@ -247,8 +272,19 @@ export function flushSync() {
 
 // ── boot-time hydration ─────────────────────────────────────────
 
-function mergeList(col, localList, serverList, isDirty) {
+function mergeList(col, localList, serverList, isDirty, migration) {
   const serverById = new Map(serverList.map(r => [String(r.id), r]));
+
+  // Once migration is done, a clean collection is server-exact: any
+  // local record the server no longer has was deleted on another
+  // device — drop it (and never push it back, or it would resurrect).
+  if (!isDirty && !migration) {
+    const merged = [...serverList];
+    // Records without an id can never sync — keep them on this device.
+    for (const rec of localList) if (!rec || rec.id == null) merged.push(rec);
+    return { merged, needsPush: false };
+  }
+
   const merged = [];
   const seen = new Set();
 
@@ -284,7 +320,9 @@ function mergeList(col, localList, serverList, isDirty) {
   return { merged, needsPush };
 }
 
-function mergeMap(col, localMap, serverMap, isDirty) {
+function mergeMap(col, localMap, serverMap, isDirty, migration) {
+  // Clean + migrated → server state wins wholesale (see mergeList).
+  if (!isDirty && !migration) return { merged: { ...serverMap }, needsPush: false };
   const merged = {};
   const keys = new Set([...Object.keys(localMap), ...Object.keys(serverMap)]);
   for (const k of keys) {
@@ -322,12 +360,20 @@ export async function hydrate({ notify = false } = {}) {
   }
 
   const changed = [];
+  // First hydrate after this feature ships: localStorage may still hold
+  // pre-sync data — merge it in (and push it up) before switching to
+  // strict server-authoritative merges.
+  const migration = localStorage.getItem(MIGRATED_KEY) !== '1';
+  // Snapshot taken before the GET: a push that lands after this moment
+  // makes the server response stale for that collection, so it must be
+  // treated as dirty (local wins) until the next refresh.
+  const fetchedAt = Date.now();
 
   for (const col of COLLECTIONS) {
     try {
       const rows = Array.isArray(server[col.name]) ? server[col.name] : [];
       const local = readLocal(col);
-      const isDirty = dirty().has(col.name);
+      const isDirty = dirty().has(col.name) || (pushTimes.get(col.name) || 0) > fetchedAt;
       const localJson = JSON.stringify(local);
       let merged = null;
       let needsPush = false;
@@ -336,7 +382,7 @@ export async function hydrate({ notify = false } = {}) {
         const serverMap = fromRows(col, rows);
         const localMap = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
         if (local === null && Object.keys(serverMap).length === 0) continue;
-        const m = mergeMap(col, localMap, serverMap, isDirty);
+        const m = mergeMap(col, localMap, serverMap, isDirty, migration);
         merged = m.merged;
         needsPush = m.needsPush;
       } else {
@@ -345,21 +391,33 @@ export async function hydrate({ notify = false } = {}) {
         // Nothing on either side yet (e.g. medicines still on the static
         // catalog) — leave localStorage untouched.
         if (localList === null && serverList.length === 0) continue;
-        const m = mergeList(col, localList ?? [], serverList, isDirty);
+        const m = mergeList(col, localList ?? [], serverList, isDirty, migration);
         merged = m.merged;
         needsPush = m.needsPush;
       }
 
-      if (localJson !== JSON.stringify(merged)) {
+      // Write + notify when either the persisted copy or the in-memory
+      // array the open pages read has drifted from the merged state —
+      // another tab in this browser may have changed localStorage
+      // without this tab's modules ever seeing it.
+      const mergedJson = JSON.stringify(merged);
+      const memJson = memoryJson(col);
+      if (localJson !== mergedJson || (memJson !== null && memJson !== mergedJson)) {
         writeLocal(col, merged);
         applyToMemory(col, merged);
         changed.push(col.name);
       }
       // Local-only edits (migration / failed push / dirty window) go up.
+      // A failed push keeps the collection dirty, so the data survives
+      // even if we mark the migration complete right after this loop.
       if (needsPush) await pushCollection(col, toRows(col, merged));
     } catch (err) {
       console.warn(`[sync] hydrate "${col.name}" failed:`, err.message || err);
     }
+  }
+
+  if (migration) {
+    try { localStorage.setItem(MIGRATED_KEY, '1'); } catch { /* quota */ }
   }
 
   if (changed.length) console.info(`[sync] refreshed: ${changed.join(', ')}`);

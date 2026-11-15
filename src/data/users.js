@@ -84,7 +84,7 @@ export function saveUserOverride(userId, patch) {
 
 // Live auto-refresh: replace the override map and re-apply it so role
 // changes made in Settings on another device show up immediately.
-registerMap('userOverrides', (merged) => {
+registerMap('userOverrides', userOverrides, (merged) => {
   for (const k of Object.keys(userOverrides)) delete userOverrides[k];
   Object.assign(userOverrides, merged);
   users.forEach(u => {
