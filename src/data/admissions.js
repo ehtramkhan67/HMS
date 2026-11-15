@@ -34,6 +34,33 @@ export function dischargeAdmission(bedId) {
   return adm;
 }
 
+/** Merge updates into an admission and persist (synced to every device). */
+export function updateAdmission(id, updates) {
+  const adm = admissions.find(a => a.id === id);
+  if (!adm) return null;
+  Object.assign(adm, updates);
+  persist();
+  return adm;
+}
+
+/**
+ * Append a nursing note to an admission. Notes are stored newest-last so the
+ * Ward modal can render them in the order they were written.
+ */
+export function addNursingNote(admissionId, { note, by }) {
+  const adm = admissions.find(a => a.id === admissionId);
+  if (!adm) return null;
+  const entry = {
+    note,
+    by: by || 'Nursing staff',
+    time: new Date().toISOString(),
+  };
+  if (!Array.isArray(adm.nursingNotes)) adm.nursingNotes = [];
+  adm.nursingNotes.push(entry);
+  persist();
+  return entry;
+}
+
 export const getAdmittedCadets = () => admissions.filter(a => a.status === 'Admitted');
 export const getAdmissionById = (id) => admissions.find(a => a.id === id);
 export const getAdmissionsByCadet = (cadetId) => admissions.filter(a => a.cadetId === cadetId);

@@ -5,10 +5,10 @@
 // Keep the same function signatures so the rest of the app needs no changes.
 
 import { cadets, getCadetById, searchCadets, registerCadet, clearCadetsBySource, houses, normalizeHouse, recordHouse, removeCadet } from '../data/cadets';
-import { medicines, getLowStockMedicines, getNearExpiryMedicines, saveMedicines, removeMedicine } from '../data/medicines';
+import { medicines, getLowStockMedicines, getNearExpiryMedicines, saveMedicines, removeMedicine, adjustStock as adjustStockRecord, addMedicine as addMedicineRecord } from '../data/medicines';
 import { addDispenseEntry } from '../data/dispenseLog';
 import { visits, getVisitsByCadet, getRecentVisits, userVisits, addUserVisit, updateUserVisit, removeUserVisit } from '../data/visits';
-import { admissions, getAdmittedCadets, addAdmission, dischargeAdmission, removeAdmission } from '../data/admissions';
+import { admissions, getAdmittedCadets, addAdmission, dischargeAdmission, removeAdmission, addNursingNote as addNursingNoteRecord } from '../data/admissions';
 import { labOrders, getPendingLabOrders, saveLabOrders, removeLabOrder } from '../data/labOrders';
 import { queue, saveQueue, removeQueueEntry } from '../data/queue';
 import { allBeds, getBedsByWard, getBedStats, wards, updateBed } from '../data/beds';
@@ -226,12 +226,35 @@ export const api = {
     return data;
   },
   getLowStock: async () => { await delay(); return getLowStockMedicines(); },
-  adjustStock: async (id, adjustment) => {
+  adjustStock: async (id, adjustment, extra = {}) => {
     await delay(400);
-    const med = medicines.find(m => m.id === id);
-    if (med) med.stock = Math.max(0, med.stock + adjustment);
-    if (med) saveMedicines();
-    return { id, adjustment, stock: med ? med.stock : null };
+    const med = adjustStockRecord(id, adjustment, extra);
+    if (!med) throw new Error('Medicine not found');
+    return { id, adjustment, stock: med.stock, batchNo: med.batchNo, expiry: med.expiry, price: med.price };
+  },
+  addMedicine: async (data) => {
+    await delay(400);
+    if (!data?.name || !String(data.name).trim()) throw new Error('Medicine name is required');
+    return addMedicineRecord({
+      name: String(data.name).trim(),
+      genericName: (data.genericName || '').trim(),
+      category: data.category || 'Other',
+      batchNo: (data.batchNo || '').trim(),
+      expiry: data.expiry || '',
+      stock: Number(data.stock) || 0,
+      minStock: Number(data.minStock) || 10,
+      price: Number(data.price) || 0,
+      unit: data.unit || 'unit',
+      supplier: (data.supplier || '').trim(),
+      location: (data.location || '').trim(),
+    });
+  },
+  /** Persist a nursing note against an admission (synced to every device). */
+  addNursingNote: async (admissionId, note, by) => {
+    await delay(300);
+    const entry = addNursingNoteRecord(admissionId, { note, by });
+    if (!entry) throw new Error('Admission not found');
+    return entry;
   },
   dispenseMedicine: async (dispenseData) => {
     await delay(500);

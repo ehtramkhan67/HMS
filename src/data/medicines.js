@@ -51,6 +51,43 @@ export function saveMedicines() {
   schedulePush('medicines');
 }
 
+/**
+ * Add stock to an existing medicine. Any of batchNo / expiry / price are
+ * applied when supplied — the Add Stock form collects them, so they must be
+ * persisted rather than silently discarded.
+ */
+export function adjustStock(id, adjustment, { batchNo, expiry, price } = {}) {
+  const med = medicines.find(m => m.id === id);
+  if (!med) return null;
+  med.stock = Math.max(0, (med.stock || 0) + adjustment);
+  if (batchNo) med.batchNo = batchNo;
+  if (expiry) med.expiry = expiry;
+  if (price != null && price !== '' && !isNaN(Number(price))) med.price = Number(price);
+  saveMedicines();
+  return med;
+}
+
+/** Add a brand-new medicine to inventory (synced to every device). */
+export function addMedicine(med) {
+  const record = {
+    id: 'med-' + Date.now(),
+    genericName: '',
+    category: 'Other',
+    batchNo: '',
+    expiry: '',
+    stock: 0,
+    minStock: 10,
+    price: 0,
+    unit: 'unit',
+    supplier: '',
+    location: '',
+    ...med,
+  };
+  medicines.push(record);
+  saveMedicines();
+  return record;
+}
+
 /** Permanently remove a medicine from inventory (synced to every device). */
 export function removeMedicine(id) {
   const i = medicines.findIndex(m => m.id === id);

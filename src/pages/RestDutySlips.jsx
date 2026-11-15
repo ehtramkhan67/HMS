@@ -161,7 +161,9 @@ export default function RestDutySlips() {
       setShowIssue(false);
       setForm({ cadetId: '', kitNumber: '', houseName: '', type: 'Rest', reason: '', fromDate: '', toDate: '' });
       toast.success(`Slip issued for ${cadet.name}`);
-      toast.info('House Master has been notified');
+      // No push/email exists — say what actually happens: the House Master
+      // has ExcuseDesk access and will see this slip in their own portal.
+      toast.info('Saved — the House Master will see it in their ExcuseDesk');
     } catch {
       toast.error('Failed to issue slip');
     }

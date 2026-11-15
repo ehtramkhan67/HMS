@@ -29,6 +29,9 @@ export default function Pharmacy() {
   const [showAddStock, setShowAddStock] = useState(false);
   const [showDispense, setShowDispense] = useState(false);
   const [stockForm, setStockForm] = useState({ medicineId: '', batchNo: '', expiry: '', quantity: '', price: '' });
+  // Used when the picker is set to "__new" — lets the inventory grow instead
+  // of only ever shrinking (delete) or changing quantity (add stock).
+  const [newMed, setNewMed] = useState({ name: '', genericName: '', category: '', unit: '' });
   const [dispenseForm, setDispenseForm] = useState({ cadetId: '', items: [{ medicineId: '', qty: 1 }] });
   const [errors, setErrors] = useState({});
   const pageSize = 12;
@@ -96,22 +99,48 @@ export default function Pharmacy() {
 
   const handleAddStock = async (e) => {
     e.preventDefault();
+    const isNew = stockForm.medicineId === '__new';
     const errs = validateForm({
       medicineId: [{ type: 'required', message: 'Select a medicine' }],
       batchNo: [{ type: 'required', message: 'Batch number is required' }],
       expiry: [{ type: 'required', message: 'Expiry date is required' }],
       quantity: [{ type: 'required', message: 'Quantity is required' }, { type: 'positive', message: 'Must be > 0' }],
     }, stockForm);
+    if (isNew && !newMed.name.trim()) errs.medicineName = 'Medicine name is required';
     setErrors(errs);
     if (Object.keys(errs).length) return;
     try {
-      await api.adjustStock(stockForm.medicineId, Number(stockForm.quantity));
-      setData(prev => prev.map(m => m.id === stockForm.medicineId ? { ...m, stock: m.stock + Number(stockForm.quantity) } : m));
+      if (isNew) {
+        const rec = await api.addMedicine({
+          ...newMed,
+          batchNo: stockForm.batchNo.trim(),
+          expiry: stockForm.expiry,
+          stock: Number(stockForm.quantity),
+          price: Number(stockForm.price) || 0,
+        });
+        setData(prev => [...prev, rec]);
+        setNewMed({ name: '', genericName: '', category: '', unit: '' });
+      } else {
+        await api.adjustStock(stockForm.medicineId, Number(stockForm.quantity), {
+          batchNo: stockForm.batchNo.trim(),
+          expiry: stockForm.expiry,
+          price: stockForm.price,
+        });
+        setData(prev => prev.map(m => m.id === stockForm.medicineId
+          ? {
+              ...m,
+              stock: m.stock + Number(stockForm.quantity),
+              batchNo: stockForm.batchNo.trim() || m.batchNo,
+              expiry: stockForm.expiry || m.expiry,
+              price: stockForm.price && !isNaN(Number(stockForm.price)) ? Number(stockForm.price) : m.price,
+            }
+          : m));
+      }
       setShowAddStock(false);
       setStockForm({ medicineId: '', batchNo: '', expiry: '', quantity: '', price: '' });
-      toast.success('Stock added successfully');
-    } catch {
-      toast.error('Failed to add stock');
+      toast.success(isNew ? `${newMed.name.trim()} added to inventory` : 'Stock added successfully');
+    } catch (err) {
+      toast.error(err?.message || 'Failed to add stock');
     }
   };
 
@@ -283,9 +312,34 @@ export default function Pharmacy() {
             <Select id="stock-med" value={stockForm.medicineId}
               onChange={(e) => setStockForm(f => ({ ...f, medicineId: e.target.value }))} error={errors.medicineId}>
               <option value="">Select medicine…</option>
+              <option value="__new">＋ Add a new medicine…</option>
               {medicines.map(m => <option key={m.id} value={m.id}>{m.name} (current: {m.stock})</option>)}
             </Select>
           </FormField>
+          {stockForm.medicineId === '__new' && (
+            <div className="grid grid-cols-2 gap-4 border border-dashed border-slate-300 rounded-lg p-3">
+              <FormField label="Medicine Name" required error={errors.medicineName} id="newmed-name">
+                <Input id="newmed-name" value={newMed.name}
+                  onChange={(e) => setNewMed(f => ({ ...f, name: e.target.value }))}
+                  placeholder="Amoxicillin 500mg" error={errors.medicineName} />
+              </FormField>
+              <FormField label="Generic Name" id="newmed-generic">
+                <Input id="newmed-generic" value={newMed.genericName}
+                  onChange={(e) => setNewMed(f => ({ ...f, genericName: e.target.value }))}
+                  placeholder="Amoxicillin" />
+              </FormField>
+              <FormField label="Category" id="newmed-cat">
+                <Input id="newmed-cat" value={newMed.category}
+                  onChange={(e) => setNewMed(f => ({ ...f, category: e.target.value }))}
+                  placeholder="Antibiotic" />
+              </FormField>
+              <FormField label="Unit" id="newmed-unit">
+                <Input id="newmed-unit" value={newMed.unit}
+                  onChange={(e) => setNewMed(f => ({ ...f, unit: e.target.value }))}
+                  placeholder="tablet" />
+              </FormField>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <FormField label="Batch No." required error={errors.batchNo} id="stock-batch">
               <Input id="stock-batch" value={stockForm.batchNo}

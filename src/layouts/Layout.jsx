@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, User, ChevronDown, LogOut, Bell } from 'lucide-react';
+import { Menu, X, User, ChevronDown, LogOut, Bell, Activity as ActivityIcon, Inbox } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getNavForRole, getRoleById } from '../utils/rbac';
 import { roles } from '../data/users';
+import { api } from '../utils/api';
+import { timeAgo } from '../utils/helpers';
 import BackgroundLogo from '../components/BackgroundLogo';
 import logoImg from '../assets/logo.png';
 
@@ -23,6 +25,9 @@ const iconMap = {
 export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifs, setNotifs] = useState([]);
+  const [notifsLoaded, setNotifsLoaded] = useState(false);
   const location = useLocation();
   const { user, role, logout, switchRole } = useAuth();
   const navItems = getNavForRole(role);
@@ -39,10 +44,30 @@ export default function Layout({ children }) {
       if (profileOpen && !e.target.closest('[data-profile-menu]')) {
         setProfileOpen(false);
       }
+      if (notifOpen && !e.target.closest('[data-notif-menu]')) {
+        setNotifOpen(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [profileOpen]);
+  }, [profileOpen, notifOpen]);
+
+  // Load the real activity feed the first time the bell is opened, then keep
+  // it fresh while open so newly synced events show up.
+  useEffect(() => {
+    if (!notifOpen) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const rows = await api.getActivities(12);
+        if (!cancelled) setNotifs(rows);
+      } catch { /* keep whatever we already have */ }
+    };
+    load();
+    setNotifsLoaded(true);
+    const t = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [notifOpen]);
 
   return (
     <div className="min-h-screen bg-surface-light flex flex-col">
@@ -72,13 +97,62 @@ export default function Layout({ children }) {
         </div>
 
         <div className="flex items-center gap-2 lg:gap-3">
-          <button
-            className="p-2 rounded-lg hover:bg-primary-800 text-white transition-colors relative focus-visible:ring-2 focus-visible:ring-secondary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-primary-900"
-            aria-label="Notifications"
-          >
-            <Bell size={20} className="text-slate-300" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-secondary-500 rounded-full ring-2 ring-primary-900" />
-          </button>
+          {/* Notifications — real activity feed */}
+          <div className="relative" data-notif-menu>
+            <button
+              onClick={() => setNotifOpen(o => !o)}
+              className="p-2 rounded-lg hover:bg-primary-800 text-white transition-colors relative focus-visible:ring-2 focus-visible:ring-secondary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-primary-900"
+              aria-label="Notifications"
+              aria-expanded={notifOpen}
+              aria-haspopup="true"
+            >
+              <Bell size={20} className="text-slate-300" />
+              {notifs.length > 0 && (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-secondary-500 rounded-full ring-2 ring-primary-900" />
+              )}
+            </button>
+            {notifOpen && (
+              <div
+                role="menu"
+                aria-label="Recent activity"
+                className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden z-50"
+              >
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <span className="text-sm font-semibold text-slate-800">Recent Activity</span>
+                  <ActivityIcon size={15} className="text-slate-400" />
+                </div>
+                <div className="max-h-96 overflow-y-auto divide-y divide-slate-100">
+                  {!notifsLoaded && (
+                    <div className="px-4 py-6 text-center text-sm text-slate-500">Loading…</div>
+                  )}
+                  {notifsLoaded && notifs.length === 0 && (
+                    <div className="px-4 py-6 text-center text-sm text-slate-500 flex flex-col items-center gap-2">
+                      <Inbox size={20} className="text-slate-300" />
+                      Nothing yet — actions across the system appear here.
+                    </div>
+                  )}
+                  {notifs.map(a => (
+                    <div key={a.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+                      <span className="mt-0.5 w-7 h-7 rounded-full bg-primary-50 text-primary-700 flex items-center justify-center shrink-0">
+                        <ActivityIcon size={13} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-slate-700 leading-snug">{a.message}</p>
+                        <p className="text-xs text-slate-400 mt-1">{a.user} · {timeAgo(a.timestamp)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Link
+                  to="/dashboard"
+                  onClick={() => setNotifOpen(false)}
+                  className="block px-4 py-2.5 text-center text-xs font-medium text-primary-700 hover:bg-slate-50 border-t border-slate-100"
+                >
+                  View full activity on Dashboard
+                </Link>
+              </div>
+            )}
+          </div>
 
           {/* Role switcher for demo purposes */}
           <div className="hidden md:flex items-center gap-1 bg-primary-950/70 border border-primary-800 rounded-lg p-0.5 mr-1">

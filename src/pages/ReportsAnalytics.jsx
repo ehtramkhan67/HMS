@@ -396,9 +396,12 @@ export default function ReportsAnalytics() {
       arrivalTime: q.arrivalTime,
     })),
     'diagnosis-distribution': diagnosisData,
+    'visits-by-day': visitDaysTotal ? visitsByDay : [],
+    'class-wise-cases': classData,
+    'admissions-by-month': admissionsByMonth.map(m => ({ month: m.month, Admitted: m.Admitted, Discharged: m.Discharged })),
     'medicine-consumption': consumptionData,
     'bed-occupancy': [{ date: todayIso(), occupied: kpis.bedsOccupied, total: kpis.bedsTotal, percent: kpis.bedPct }],
-  }), [fVisits, fRx, fAdm, fSlips, fLabs, fMeasures, fQueue, diagnosisData, consumptionData, kpis, cadetMap, houseOf]);
+  }), [fVisits, fRx, fAdm, fSlips, fLabs, fMeasures, fQueue, diagnosisData, consumptionData, kpis, cadetMap, houseOf, classData, admissionsByMonth, visitsByDay, visitDaysTotal]);
 
   const handleExportCSV = (name) => {
     const rows = csvSets[name];
@@ -533,7 +536,7 @@ export default function ReportsAnalytics() {
           title="Visits by House — Daily Trend"
           subtitle={`OPD + consultation visits per day (${visitDaysTotal} in period)`}
           rows={visitDaysTotal ? visitsByDay : []}
-          onExport={() => handleExportCSV('opd-visits')}
+          onExport={() => handleExportCSV('visits-by-day')}
         >
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={visitsByDay}>
@@ -591,7 +594,7 @@ export default function ReportsAnalytics() {
           title="Class-wise Cases"
           subtitle="Visits grouped by cadet class"
           rows={classData}
-          onExport={() => handleExportCSV('opd-visits')}
+          onExport={() => handleExportCSV('class-wise-cases')}
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={classData} layout="vertical">
@@ -608,7 +611,7 @@ export default function ReportsAnalytics() {
           title="Admissions vs Discharges"
           subtitle="Monthly ward movement (last 6 months)"
           rows={fAdm.length ? admissionsByMonth : []}
-          onExport={() => handleExportCSV('admissions')}
+          onExport={() => handleExportCSV('admissions-by-month')}
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={admissionsByMonth}>

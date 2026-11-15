@@ -18,7 +18,7 @@ import DeleteButton from '../components/DeleteButton';
 
 export default function WardBeds() {
   const toast = useToast();
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const [wards, setWards] = useState([]);
   const [beds, setBeds] = useState([]);
   const [bedStats, setBedStats] = useState(null);
@@ -138,13 +138,23 @@ export default function WardBeds() {
     }
   };
 
-  const addNursingNote = () => {
+  const addNursingNote = async () => {
     if (!nursingNote.trim()) {
       toast.warning('Enter a nursing note first');
       return;
     }
-    toast.success('Nursing note added');
-    setNursingNote('');
+    if (!activeAdmission) {
+      toast.error('No active admission selected');
+      return;
+    }
+    try {
+      await api.addNursingNote(activeAdmission.id, nursingNote.trim(), user?.name);
+      setNursingNote('');
+      await refresh();
+      toast.success('Nursing note added');
+    } catch {
+      toast.error('Failed to save nursing note');
+    }
   };
 
   if (loading) return <Loading message="Loading ward data…" />;
