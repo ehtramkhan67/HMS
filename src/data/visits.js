@@ -2,6 +2,8 @@
 // No mock visits — everything here is created through the app and
 // persisted so it survives refreshes.
 
+import { schedulePush } from '../utils/sync';
+
 const USER_VISITS_KEY = 'cchms_user_visits_v1';
 
 function loadUserVisits() {
@@ -14,6 +16,7 @@ function loadUserVisits() {
 
 function saveUserVisits() {
   try { localStorage.setItem(USER_VISITS_KEY, JSON.stringify(userVisits)); } catch { /* ignore quota errors */ }
+  schedulePush('visits');
 }
 
 export const userVisits = loadUserVisits();

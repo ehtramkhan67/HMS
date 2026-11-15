@@ -47,3 +47,32 @@ CREATE TRIGGER cadets_updated_at
 -- Fresh tables have no planner statistics — make the kit_number
 -- unique index the guaranteed choice for point lookups.
 ANALYZE cadets;
+
+-- ============================================================
+-- Sync store — one generic JSON document table for every app
+-- collection the frontend persists (visits, queue, prescriptions,
+-- admissions, beds, lab orders, slips, medicines, ...).
+--
+-- Each frontend collection is a set of rows keyed by
+-- (collection, id); `data` holds the record as JSONB exactly as
+-- the browser stored it, so the client can hydrate straight from
+-- it without any column mapping.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS records (
+  collection TEXT        NOT NULL,   -- e.g. 'visits', 'prescriptions'
+  id         TEXT        NOT NULL,   -- record id from the app
+  data       JSONB       NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (collection, id)
+);
+
+-- Collection scans (GET /api/records/:collection) are always
+-- filtered by collection first.
+CREATE INDEX IF NOT EXISTS idx_records_collection ON records (collection);
+
+-- Keep updated_at current on every upsert.
+DROP TRIGGER IF EXISTS records_updated_at ON records;
+CREATE TRIGGER records_updated_at
+  BEFORE UPDATE ON records
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();

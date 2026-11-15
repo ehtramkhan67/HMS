@@ -27,6 +27,8 @@ const labTests = [
 
 // Orders are persisted so lab data entered by the Lab portal
 // survives refreshes (and feeds dashboards/House Master views).
+import { schedulePush } from '../utils/sync';
+
 const ORDERS_KEY = 'cchms_lab_orders_v1';
 
 function loadOrders() {
@@ -41,6 +43,7 @@ export const labOrders = loadOrders();
 
 export function saveLabOrders() {
   try { localStorage.setItem(ORDERS_KEY, JSON.stringify(labOrders)); } catch { /* ignore quota errors */ }
+  schedulePush('labOrders');
 }
 
 export const labTestCatalog = labTests;

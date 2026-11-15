@@ -1,6 +1,8 @@
 // Annual medical test records — height & weight measurement only.
 // One record per cadet per year, persisted across refreshes.
 
+import { schedulePush } from '../utils/sync';
+
 const KEY = 'cchms_annual_medical_v1';
 
 function load() {
@@ -13,6 +15,7 @@ function load() {
 
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(annualMedical)); } catch { /* ignore quota errors */ }
+  schedulePush('annualMedical');
 }
 
 export const annualMedical = load();

@@ -1,9 +1,12 @@
-// API Layer — mock data access layer
-// Replace all functions below with real fetch/axios calls when a backend is added.
+// API Layer — application data access layer.
+// All reads/writes go through the data modules in src/data/*, which
+// persist to localStorage and are mirrored to the backend by
+// src/utils/sync.js (cross-device sync).
 // Keep the same function signatures so the rest of the app needs no changes.
 
 import { cadets, getCadetById, searchCadets, registerCadet, clearCadetsBySource, houses, normalizeHouse, recordHouse } from '../data/cadets';
-import { medicines, getLowStockMedicines, getNearExpiryMedicines } from '../data/medicines';
+import { medicines, getLowStockMedicines, getNearExpiryMedicines, saveMedicines } from '../data/medicines';
+import { addDispenseEntry } from '../data/dispenseLog';
 import { visits, getVisitsByCadet, getRecentVisits, userVisits, addUserVisit, updateUserVisit } from '../data/visits';
 import { admissions, getAdmittedCadets, addAdmission, dischargeAdmission } from '../data/admissions';
 import { labOrders, getPendingLabOrders, saveLabOrders } from '../data/labOrders';
@@ -227,9 +230,15 @@ export const api = {
     await delay(400);
     const med = medicines.find(m => m.id === id);
     if (med) med.stock = Math.max(0, med.stock + adjustment);
+    if (med) saveMedicines();
     return { id, adjustment, stock: med ? med.stock : null };
   },
-  dispenseMedicine: async (dispenseData) => { await delay(500); return { ...dispenseData, id: 'disp-' + Date.now(), dispensedAt: new Date().toISOString() }; },
+  dispenseMedicine: async (dispenseData) => {
+    await delay(500);
+    const entry = { ...dispenseData, id: 'disp-' + Date.now(), dispensedAt: new Date().toISOString() };
+    addDispenseEntry(entry);
+    return entry;
+  },
 
   // ── Physician / Prescriptions (SMO → Physician flow) ──
   getPrescriptions: async (filters = {}) => {
@@ -272,6 +281,7 @@ export const api = {
       const med = medicines.find(m => m.id === item.medicineId);
       if (med) med.stock = Math.max(0, med.stock - 1);
     });
+    saveMedicines();
     addActivity({ type: 'dispense', message: `Medicine dispensed for ${rx.cadetName}`, user: rx.dispensedBy, cadetId: rx.cadetId });
     return { ...rx };
   },

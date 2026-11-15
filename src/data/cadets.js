@@ -1,3 +1,5 @@
+import { schedulePush } from '../utils/sync';
+
 export const houses = [
   { id: 'house-1', name: 'Jinnah House', color: '#042938', shortName: 'JH' },    // Navy Blue
   { id: 'house-2', name: 'Kushal House', color: '#008000', shortName: 'KH' },    // Green
@@ -36,6 +38,7 @@ function loadRegistered() {
 
 function saveRegistered(list) {
   try { localStorage.setItem(REGISTERED_KEY, JSON.stringify(list)); } catch { /* ignore quota errors */ }
+  schedulePush('registeredCadets');
 }
 
 export const cadets = loadRegistered();

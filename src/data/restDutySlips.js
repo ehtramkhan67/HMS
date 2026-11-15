@@ -3,6 +3,8 @@
 // Persisted so issued slips survive refreshes and show up in the
 // House Master's portal (and the ExcuseDesk list) next session.
 
+import { schedulePush } from '../utils/sync';
+
 const SLIPS_KEY = 'cchms_rest_duty_slips_v1';
 
 function loadSlips() {
@@ -17,6 +19,7 @@ export const restDutySlips = loadSlips();
 
 export function saveSlips() {
   try { localStorage.setItem(SLIPS_KEY, JSON.stringify(restDutySlips)); } catch { /* ignore quota errors */ }
+  schedulePush('restDutySlips');
 }
 
 // Auto-expiry: a slip is valid only through its To date. Once today

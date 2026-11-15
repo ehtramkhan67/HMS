@@ -6,6 +6,8 @@
  * consultations and are persisted so they survive refreshes.
  */
 
+import { schedulePush } from '../utils/sync';
+
 const RX_KEY = 'cchms_prescriptions_v1';
 
 function loadRx() {
@@ -18,6 +20,7 @@ function loadRx() {
 
 function saveRx() {
   try { localStorage.setItem(RX_KEY, JSON.stringify(prescriptions)); } catch { /* ignore quota errors */ }
+  schedulePush('prescriptions');
 }
 
 export const prescriptions = loadRx();

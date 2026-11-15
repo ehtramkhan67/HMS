@@ -2,6 +2,8 @@
 // the system (consultation, admission, dispensing, lab, etc.).
 // Persisted (capped) so every portal keeps showing what happened.
 
+import { schedulePush } from '../utils/sync';
+
 const ACTIVITY_KEY = 'cchms_activities_v1';
 const MAX_ACTIVITIES = 100;
 
@@ -17,6 +19,7 @@ export const activities = loadActivities();
 
 function saveActivities() {
   try { localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activities)); } catch { /* ignore quota errors */ }
+  schedulePush('activities');
 }
 
 export function addActivity({ type, message, user, cadetId }) {

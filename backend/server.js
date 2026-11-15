@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3001;
 // CORS for the Vite dev server / LAN preview
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   return next();
@@ -156,8 +156,141 @@ app.post('/api/turnover/add-entry', async (req, res) => {
   }
 });
 
+/* ---------------- 5. Record sync store ----------------
+ * The frontend persists every user-entered collection (visits, queue,
+ * admissions, beds, prescriptions, lab orders, slips, medicines, ...)
+ * here as JSON documents, so the same data is visible on every device.
+ *
+ * Wire format: { records: [{ id: "<record id>", data: {...} }, ...] }
+ * A PUT replaces the whole collection (matches localStorage semantics).
+ */
+
+// Only these collections may be written — rejects stray/malformed names.
+const RECORD_COLLECTIONS = new Set([
+  'visits',
+  'queue',
+  'admissions',
+  'bedState',
+  'labOrders',
+  'prescriptions',
+  'restDutySlips',
+  'fitnessCertificates',
+  'admissionMedicals',
+  'annualMedical',
+  'activities',
+  'registeredCadets',
+  'userOverrides',
+  'medicines',
+  'dispenseLog',
+]);
+
+const MAX_RECORDS_PER_COLLECTION = 10000;
+
+const isKnownCollection = (name) =>
+  typeof name === 'string' && RECORD_COLLECTIONS.has(name);
+
+// GET /api/records — every collection in one round trip (app boot)
+app.get('/api/records', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT collection, id, data FROM records'
+    );
+    const out = {};
+    for (const name of RECORD_COLLECTIONS) out[name] = [];
+    for (const row of rows) {
+      if (out[row.collection]) out[row.collection].push({ id: row.id, data: row.data });
+    }
+    return res.json(out);
+  } catch (err) {
+    console.error('records list failed:', err.message);
+    return res.status(500).json({ error: 'Failed to load records' });
+  }
+});
+
+// GET /api/records/:collection — one collection
+app.get('/api/records/:collection', async (req, res) => {
+  const { collection } = req.params;
+  if (!isKnownCollection(collection)) {
+    return res.status(404).json({ error: 'Unknown collection' });
+  }
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, data FROM records WHERE collection = $1 ORDER BY id',
+      [collection]
+    );
+    return res.json(rows.map(r => ({ id: r.id, data: r.data })));
+  } catch (err) {
+    console.error(`records get ${collection} failed:`, err.message);
+    return res.status(500).json({ error: 'Failed to load collection' });
+  }
+});
+
+// PUT /api/records/:collection — replace the whole collection atomically
+app.put('/api/records/:collection', async (req, res) => {
+  const { collection } = req.params;
+  if (!isKnownCollection(collection)) {
+    return res.status(404).json({ error: 'Unknown collection' });
+  }
+  const { records } = req.body ?? {};
+  if (!Array.isArray(records)) {
+    return res.status(400).json({ error: 'Body must be { records: [...] }' });
+  }
+  if (records.length > MAX_RECORDS_PER_COLLECTION) {
+    return res.status(413).json({ error: 'Too many records' });
+  }
+  const valid = [];
+  for (const rec of records) {
+    if (!rec || typeof rec !== 'object' || typeof rec.id !== 'string' || !rec.id) {
+      return res.status(400).json({ error: 'Every record needs a string id' });
+    }
+    // Accept both wire shapes: { id, data } and a bare record that
+    // carries its own id (stored as-is).
+    valid.push({ id: rec.id, data: rec.data !== undefined ? rec.data : rec });
+  }
+  try {
+    const count = await withTransaction(async (client) => {
+      await client.query('DELETE FROM records WHERE collection = $1', [collection]);
+      for (const rec of valid) {
+        await client.query(
+          `INSERT INTO records (collection, id, data)
+           VALUES ($1, $2, $3::jsonb)
+           ON CONFLICT (collection, id)
+           DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+          [collection, rec.id, JSON.stringify(rec.data ?? null)]
+        );
+      }
+      return valid.length;
+    });
+    return res.json({ ok: true, collection, count });
+  } catch (err) {
+    console.error(`records put ${collection} failed:`, err.message);
+    return res.status(500).json({ error: 'Failed to save collection' });
+  }
+});
+
+// DELETE /api/records/:collection/:id — remove a single record
+app.delete('/api/records/:collection/:id', async (req, res) => {
+  const { collection, id } = req.params;
+  if (!isKnownCollection(collection)) {
+    return res.status(404).json({ error: 'Unknown collection' });
+  }
+  try {
+    const r = await pool.query(
+      'DELETE FROM records WHERE collection = $1 AND id = $2',
+      [collection, id]
+    );
+    if (!r.rowCount) return res.status(404).json({ error: 'Record not found' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('record delete failed:', err.message);
+    return res.status(500).json({ error: 'Failed to delete record' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`HMS cadet directory API listening on http://localhost:${PORT}`);
   console.log('  GET  /api/cadets/:kit_number');
+  console.log('  GET  /api/records | /api/records/:collection');
+  console.log('  PUT  /api/records/:collection   DELETE /api/records/:collection/:id');
   console.log('  POST /api/cadets/import | /api/turnover/{archive,delete,add-entry}');
 });

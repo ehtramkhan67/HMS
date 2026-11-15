@@ -1,3 +1,5 @@
+import { schedulePush } from '../utils/sync';
+
 export const roles = {
   doctor: {
     id: 'doctor',
@@ -76,5 +78,6 @@ export function saveUserOverride(userId, patch) {
   Object.assign(u, patch);
   userOverrides[userId] = { ...(userOverrides[userId] || {}), ...patch };
   try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(userOverrides)); } catch { /* ignore quota errors */ }
+  schedulePush('userOverrides');
   return u;
 }

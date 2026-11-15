@@ -1,0 +1,275 @@
+// Cross-device sync layer -------------------------------------------------
+//
+// Every data module in src/data/* persists to localStorage (fast + works
+// offline). This module mirrors each collection to the PostgreSQL backend
+// so the same records appear on every laptop:
+//
+//   * hydrate()           — runs ONCE at boot, BEFORE the app modules are
+//                           imported (see src/main.jsx). Pulls every
+//                           collection from the API, merges it with local
+//                           data and writes the result back to
+//                           localStorage, so the modules' load-time reads
+//                           pick up the server state. Also migrates any
+//                           pre-sync localStorage data into the DB.
+//   * schedulePush(name)  — called by every save*() in src/data/*. Marks
+//                           the collection dirty immediately (survives a
+//                           closed tab), then pushes after a short debounce.
+//                           Failed pushes stay dirty and win the merge on
+//                           the next boot, so offline edits are never lost.
+//
+// localStorage remains a fast offline cache; the server is authoritative
+// for everything except collections with unsynced (dirty) local edits.
+
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+const DIRTY_KEY = 'cchms_sync_dirty_v1';
+
+/**
+ * name  → collection name on the server (must match the backend whitelist)
+ * key   → localStorage key owned by the data module
+ * mode  → 'list' = array of records that each have an `id`
+ *         'map'  = a single object keyed by bed id / user id
+ */
+export const COLLECTIONS = [
+  { name: 'visits', key: 'cchms_user_visits_v1', mode: 'list' },
+  { name: 'queue', key: 'cchms_opd_queue_v1', mode: 'list' },
+  { name: 'admissions', key: 'cchms_admissions_v1', mode: 'list' },
+  { name: 'bedState', key: 'cchms_bed_state_v1', mode: 'map' },
+  { name: 'labOrders', key: 'cchms_lab_orders_v1', mode: 'list' },
+  { name: 'prescriptions', key: 'cchms_prescriptions_v1', mode: 'list' },
+  { name: 'restDutySlips', key: 'cchms_rest_duty_slips_v1', mode: 'list' },
+  { name: 'fitnessCertificates', key: 'cchms_fitness_certs_v1', mode: 'list' },
+  { name: 'admissionMedicals', key: 'cchms_admission_medicals_v1', mode: 'list' },
+  { name: 'annualMedical', key: 'cchms_annual_medical_v1', mode: 'list' },
+  { name: 'activities', key: 'cchms_activities_v1', mode: 'list' },
+  { name: 'registeredCadets', key: 'cchms_registered_cadets_v1', mode: 'list' },
+  { name: 'userOverrides', key: 'cchms_user_overrides_v1', mode: 'map' },
+  { name: 'medicines', key: 'cchms_medicines_v1', mode: 'list' },
+  { name: 'dispenseLog', key: 'cchms_dispense_log_v1', mode: 'list' },
+];
+
+const byName = new Map(COLLECTIONS.map(c => [c.name, c]));
+
+// ── helpers ─────────────────────────────────────────────────────
+
+function parseRaw(raw) {
+  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+function readLocal(col) {
+  return parseRaw(localStorage.getItem(col.key));
+}
+
+function writeLocal(col, value) {
+  try { localStorage.setItem(col.key, JSON.stringify(value)); } catch { /* quota */ }
+}
+
+// Collections whose last push failed. Kept in localStorage so an edit
+// made right before the tab closed still wins the merge next boot.
+let dirtySet = null;
+function dirty() {
+  if (!dirtySet) dirtySet = new Set(parseRaw(localStorage.getItem(DIRTY_KEY)) || []);
+  return dirtySet;
+}
+function persistDirty() {
+  try { localStorage.setItem(DIRTY_KEY, JSON.stringify([...dirty()])); } catch { /* quota */ }
+}
+
+// localStorage value → wire format [{ id, data }]
+function toRows(col, value) {
+  if (col.mode === 'map') {
+    return [{ id: 'state', data: value }];
+  }
+  const rows = [];
+  for (const rec of value) {
+    if (rec && rec.id != null) rows.push({ id: String(rec.id), data: rec });
+    else console.warn(`[sync] ${col.name}: record without id skipped`, rec);
+  }
+  return rows;
+}
+
+// wire format → localStorage value
+function fromRows(col, rows) {
+  if (col.mode === 'map') {
+    const state = rows.find(r => r.id === 'state');
+    return state && state.data && typeof state.data === 'object' ? state.data : {};
+  }
+  return rows.map(r => r.data).filter(d => d && typeof d === 'object');
+}
+
+async function pushRows(col, rows, signal) {
+  const res = await fetch(`${API_BASE}/api/records/${col.name}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ records: rows }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return true;
+}
+
+// Push one collection now; update the dirty flag on success/failure.
+async function pushCollection(col, rows) {
+  try {
+    await pushRows(col, rows);
+    if (dirty().delete(col.name)) persistDirty();
+    return true;
+  } catch (err) {
+    console.warn(`[sync] push "${col.name}" failed:`, err.message || err);
+    dirty().add(col.name);
+    persistDirty();
+    return false;
+  }
+}
+
+// ── debounced push (called by every save*()) ────────────────────
+
+const pending = new Set();
+let flushTimer = null;
+
+/** Queue a collection for upload. Marks it dirty synchronously. */
+export function schedulePush(name) {
+  if (!byName.has(name)) return;
+  dirty().add(name);
+  persistDirty();
+  pending.add(name);
+  if (flushTimer == null) flushTimer = setTimeout(flush, 400);
+}
+
+async function flush() {
+  flushTimer = null;
+  const names = [...pending];
+  pending.clear();
+  for (const name of names) {
+    const col = byName.get(name);
+    const local = readLocal(col);
+    if (local === null) continue; // nothing stored yet — nothing to push
+    await pushCollection(col, toRows(col, local));
+  }
+  // A save arrived while we were flushing — queue another round.
+  if (pending.size && flushTimer == null) flushTimer = setTimeout(flush, 400);
+}
+
+/** Push everything still pending immediately (used on page unload). */
+export function flushSync() {
+  if (flushTimer != null) { clearTimeout(flushTimer); flushTimer = null; }
+  if (!pending.size) return;
+  // keepalive lets the request outlive the page; dirty flags already
+  // protect the data if the request still doesn't make it.
+  const names = [...pending];
+  pending.clear();
+  for (const name of names) {
+    const col = byName.get(name);
+    const local = readLocal(col);
+    if (local === null) continue;
+    try {
+      fetch(`${API_BASE}/api/records/${col.name}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records: toRows(col, local) }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* best effort */ }
+  }
+}
+
+// ── boot-time hydration ─────────────────────────────────────────
+
+function mergeList(col, localList, serverList, isDirty) {
+  const serverById = new Map(serverList.map(r => [String(r.id), r]));
+  const merged = [];
+  const seen = new Set();
+
+  // Local order first; the server only wins for shared records when this
+  // collection has no unsynced local edits.
+  for (const rec of localList) {
+    const id = rec && rec.id != null ? String(rec.id) : null;
+    if (!id) { merged.push(rec); continue; }
+    const srv = serverById.get(id);
+    merged.push(srv && !isDirty ? srv : rec);
+    seen.add(id);
+  }
+  // Records that only exist on the server (made on another laptop).
+  // Skipped when local is dirty AND empty — an empty dirty list is an
+  // intentional clear (e.g. "reset annual medical data").
+  if (!isDirty || localList.length > 0) {
+    for (const srv of serverList) {
+      const id = String(srv.id);
+      if (!seen.has(id)) { merged.push(srv); seen.add(id); }
+    }
+  }
+
+  const needsPush =
+    // local record changed / added vs server
+    merged.some(rec => {
+      if (!rec || rec.id == null) return false;
+      const srv = serverById.get(String(rec.id));
+      return !srv || JSON.stringify(srv) !== JSON.stringify(rec);
+    }) ||
+    // a server record was deleted locally
+    serverList.some(srv => !seen.has(String(srv.id)));
+
+  return { merged, needsPush };
+}
+
+function mergeMap(col, localMap, serverMap, isDirty) {
+  const merged = {};
+  const keys = new Set([...Object.keys(localMap), ...Object.keys(serverMap)]);
+  for (const k of keys) {
+    if (isDirty && k in localMap) merged[k] = localMap[k];
+    else if (k in serverMap) merged[k] = serverMap[k];
+    else merged[k] = localMap[k];
+  }
+  const needsPush = JSON.stringify(merged) !== JSON.stringify(serverMap);
+  return { merged, needsPush };
+}
+
+/**
+ * Pull every collection from the API, merge with local data and write the
+ * result to localStorage. Must run before the data modules are imported.
+ * Never throws — offline boots fall back to localStorage.
+ */
+export async function hydrate() {
+  let server;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const res = await fetch(`${API_BASE}/api/records`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    server = await res.json();
+  } catch (err) {
+    console.warn('[sync] hydrate skipped (offline or API down):', err.message || err);
+    return false;
+  }
+
+  const isDirtyName = (name) => dirty().has(name);
+
+  for (const col of COLLECTIONS) {
+    try {
+      const rows = Array.isArray(server[col.name]) ? server[col.name] : [];
+      const local = readLocal(col);
+      const isDirty = isDirtyName(col.name);
+
+      if (col.mode === 'map') {
+        const serverMap = fromRows(col, rows);
+        const localMap = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
+        const { merged, needsPush } = mergeMap(col, localMap, serverMap, isDirty);
+        if (local === null && Object.keys(serverMap).length === 0) continue;
+        if (JSON.stringify(local) !== JSON.stringify(merged)) writeLocal(col, merged);
+        if (needsPush) await pushCollection(col, toRows(col, merged));
+      } else {
+        const serverList = fromRows(col, rows);
+        const localList = Array.isArray(local) ? local : null;
+        // Nothing on either side yet (e.g. medicines still on the static
+        // catalog) — leave localStorage untouched.
+        if (localList === null && serverList.length === 0) continue;
+        const { merged, needsPush } = mergeList(col, localList ?? [], serverList, isDirty);
+        if (JSON.stringify(local) !== JSON.stringify(merged)) writeLocal(col, merged);
+        if (needsPush) await pushCollection(col, toRows(col, merged));
+      }
+    } catch (err) {
+      console.warn(`[sync] hydrate "${col.name}" failed:`, err.message || err);
+    }
+  }
+  return true;
+}

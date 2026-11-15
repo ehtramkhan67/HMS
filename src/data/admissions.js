@@ -1,3 +1,5 @@
+import { schedulePush } from '../utils/sync';
+
 const STORAGE_KEY = 'cchms_admissions_v1';
 
 function loadAdmissions() {
@@ -12,6 +14,7 @@ export const admissions = loadAdmissions();
 
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(admissions)); } catch { /* ignore quota errors */ }
+  schedulePush('admissions');
 }
 
 export function addAdmission(record) {

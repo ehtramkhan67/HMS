@@ -2,6 +2,8 @@
 // Records are only created through the Fitness & Medicals page
 // (real user action). Persisted so they survive refreshes.
 
+import { schedulePush } from '../utils/sync';
+
 const CERTS_KEY = 'cchms_fitness_certs_v1';
 const ADM_MED_KEY = 'cchms_admission_medicals_v1';
 
@@ -15,6 +17,7 @@ function load(key) {
 
 function save(key, list) {
   try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* ignore quota errors */ }
+  schedulePush(key === CERTS_KEY ? 'fitnessCertificates' : 'admissionMedicals');
 }
 
 export const fitnessCertificates = load(CERTS_KEY);

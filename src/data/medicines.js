@@ -1,4 +1,10 @@
-export const medicines = [
+import { schedulePush } from '../utils/sync';
+
+const STORAGE_KEY = 'cchms_medicines_v1';
+
+// Built-in catalog — used until a synced copy exists (stock levels are
+// edited through the Pharmacy page and then persisted + synced).
+const DEFAULT_MEDICINES = [
   { id: 'med-1', name: 'Paracetamol 500mg', genericName: 'Acetaminophen', category: 'Analgesic', batchNo: 'PCM-2024-001', expiry: '2025-12-31', stock: 450, minStock: 100, price: 2.5, unit: 'tablet', supplier: 'Getz Pharma', location: 'Shelf A1' },
   { id: 'med-2', name: 'Ibuprofen 400mg', genericName: 'Ibuprofen', category: 'NSAID', batchNo: 'IBU-2024-002', expiry: '2025-08-15', stock: 85, minStock: 100, price: 3.5, unit: 'tablet', supplier: 'GSK Pakistan', location: 'Shelf A1' },
   { id: 'med-3', name: 'Amoxicillin 500mg', genericName: 'Amoxicillin', category: 'Antibiotic', batchNo: 'AMX-2024-003', expiry: '2025-06-30', stock: 200, minStock: 80, price: 8, unit: 'capsule', supplier: 'Hoechst Pakistan', location: 'Shelf B1' },
@@ -24,6 +30,25 @@ export const medicines = [
   { id: 'med-23', name: 'Epinephrine Ampoule 1mg', genericName: 'Adrenaline', category: 'Emergency', batchNo: 'EPI-2024-023', expiry: '2025-06-30', stock: 15, minStock: 20, price: 45, unit: 'ampoule', supplier: 'Local Supplier', location: 'Emergency Trolley' },
   { id: 'med-24', name: 'Dexamethasone 4mg/ml', genericName: 'Dexamethasone', category: 'Steroid', batchNo: 'DEX-2024-024', expiry: '2025-11-30', stock: 50, minStock: 25, price: 15, unit: 'ampoule', supplier: 'Hoechst Pakistan', location: 'Shelf B3' },
 ];
+
+function loadMedicines() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* ignore corrupt storage */ }
+  return null;
+}
+
+// A synced copy (stock edited on any device) wins over the static catalog.
+export const medicines = loadMedicines() || DEFAULT_MEDICINES;
+
+export function saveMedicines() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(medicines)); } catch { /* ignore quota errors */ }
+  schedulePush('medicines');
+}
 
 export const getMedicineById = (id) => medicines.find(m => m.id === id);
 export const getLowStockMedicines = () => medicines.filter(m => m.stock < m.minStock);

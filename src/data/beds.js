@@ -1,3 +1,5 @@
+import { schedulePush } from '../utils/sync';
+
 export const wards = [
   { id: 'ward-1', name: 'General Ward', floor: 'Ground Floor', beds: 20 },
 ];
@@ -14,6 +16,7 @@ function loadBedState() {
 
 function saveBedState(state) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore quota errors */ }
+  schedulePush('bedState');
 }
 
 const bedState = loadBedState();
