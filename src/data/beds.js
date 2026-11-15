@@ -1,4 +1,4 @@
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerMap } from '../utils/sync';
 
 export const wards = [
   { id: 'ward-1', name: 'General Ward', floor: 'Ground Floor', beds: 20 },
@@ -40,6 +40,22 @@ function generateBeds(ward) {
 }
 
 export const allBeds = wards.flatMap(w => generateBeds(w));
+
+// Live auto-refresh: replace the bed-state map and re-apply it to the
+// generated bed objects so Ward & Beds (already mounted) shows remote
+// admissions/discharges without a reload.
+registerMap('bedState', (merged) => {
+  for (const k of Object.keys(bedState)) delete bedState[k];
+  Object.assign(bedState, merged);
+  for (const bed of allBeds) {
+    const s = merged[bed.id] || {};
+    bed.status = s.status || 'available';
+    bed.patientId = s.patientId ?? null;
+    bed.patientName = s.patientName ?? null;
+    bed.admittedAt = s.admittedAt ?? null;
+    bed.diagnosis = s.diagnosis ?? null;
+  }
+});
 
 export function updateBed(bedId, updates) {
   const bed = allBeds.find(b => b.id === bedId);

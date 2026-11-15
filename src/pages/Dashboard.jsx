@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../utils/api';
 import { canAccess } from '../utils/rbac';
 import { timeAgo } from '../utils/helpers';
+import { useSyncRefresh } from '../utils/sync';
 import { houses, recordHouse } from '../data/cadets';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -63,9 +64,11 @@ export default function Dashboard() {
     loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showLab, showQueue, houseScope]);
+  // Live sync: re-render with fresh numbers when another device changes data.
+  useSyncRefresh(loadDashboard);
 
-  async function loadDashboard() {
-    setLoading(true);
+  async function loadDashboard(silent = false) {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [lowStock, admitted, pendingLabs, queue, acts, illness, opd, slips] = await Promise.all([
@@ -97,9 +100,9 @@ export default function Dashboard() {
         : illness);
       setOpdData(opd);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 

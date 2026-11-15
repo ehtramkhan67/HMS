@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Ruler, Plus, Search, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Trash2,
 } from 'lucide-react';
@@ -12,6 +12,8 @@ import { api } from '../utils/api';
 import { houses } from '../data/cadets';
 import { formatDate, validateForm } from '../utils/helpers';
 import { useKitAutofill } from '../utils/useKitAutofill';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 const PAGE_SIZE = 15;
 
@@ -53,25 +55,47 @@ export default function FitnessMedicals() {
     [cadetsList]
   );
 
-  const load = async () => {
-    setLoading(true);
+  // Rows the user has typed into but not saved yet — a background
+  // refresh must not wipe in-progress edits.
+  const dirtyDraftsRef = useRef(new Set());
+
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [c, m] = await Promise.all([api.getCadets(), api.getAnnualMedical()]);
       const measured = new Set(m.map(r => r.cadetId));
       setCadetsList(c.filter(cd => cd.registeredVia === 'Annual Medical' || measured.has(cd.id)));
       setRecords(m);
-      const map = {};
-      m.forEach(r => { map[r.cadetId] = { height: String(r.height ?? ''), weight: String(r.weight ?? '') }; });
-      setDrafts(map);
+      const dirty = dirtyDraftsRef.current;
+      setDrafts(prev => {
+        const map = {};
+        m.forEach(r => { map[r.cadetId] = { height: String(r.height ?? ''), weight: String(r.weight ?? '') }; });
+        if (silent) for (const id of dirty) if (prev[id]) map[id] = prev[id];
+        return map;
+      });
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteMeasurement = async (c, rec) => {
+    try {
+      await api.deleteMeasurement(rec.id);
+      dirtyDraftsRef.current.delete(c.id);
+      setRecords(prev => prev.filter(r => r.id !== rec.id));
+      setDrafts(prev => ({ ...prev, [c.id]: { height: '', weight: '' } }));
+      toast.success(`Measurement for ${c.name} deleted permanently`);
+    } catch {
+      toast.error('Failed to delete measurement');
+    }
+  };
 
   const recordMap = useMemo(() => {
     const m = {};
@@ -102,8 +126,10 @@ export default function FitnessMedicals() {
   const safePage = Math.min(page, totalPages);
   const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const setDraft = (cadetId, key, value) =>
+  const setDraft = (cadetId, key, value) => {
+    dirtyDraftsRef.current.add(cadetId);
     setDrafts(d => ({ ...d, [cadetId]: { ...(d[cadetId] || { height: '', weight: '' }), [key]: value } }));
+  };
 
   const handleSave = async (cadet) => {
     const draft = drafts[cadet.id] || { height: '', weight: '' };
@@ -141,6 +167,7 @@ export default function FitnessMedicals() {
         const rest = prev.filter(r => r.cadetId !== cadet.id);
         return [{ ...rec, cadetId: cadet.id }, ...rest];
       });
+      dirtyDraftsRef.current.delete(cadet.id);
       toast.success(`Height & weight saved for ${cadet.name}`);
     } catch (err) {
       toast.error(err.message || 'Failed to save measurement');
@@ -331,10 +358,16 @@ export default function FitnessMedicals() {
                             </td>
                             <td className="text-right">
                               {canEdit && (
-                                <button className="btn-primary btn-sm" disabled={savingId === c.id}
-                                  onClick={() => handleSave(c)}>
-                                  {savingId === c.id ? 'Saving…' : rec ? 'Update' : 'Save'}
-                                </button>
+                                <div className="flex items-center justify-end gap-2">
+                                  <button className="btn-primary btn-sm" disabled={savingId === c.id}
+                                    onClick={() => handleSave(c)}>
+                                    {savingId === c.id ? 'Saving…' : rec ? 'Update' : 'Save'}
+                                  </button>
+                                  {rec && (
+                                    <DeleteButton onConfirm={() => handleDeleteMeasurement(c, rec)}
+                                      label="Delete this measurement permanently" />
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>

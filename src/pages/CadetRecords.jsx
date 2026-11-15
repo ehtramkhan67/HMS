@@ -9,9 +9,13 @@ import { api } from '../utils/api';
 import { houses, classes } from '../data/cadets';
 import { isLimitedRole } from '../utils/rbac';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 export default function CadetRecords() {
   const { role, user } = useAuth();
+  const toast = useToast();
   // House Masters only ever see cadets of their own house.
   const hmHouseId = role === 'houseMaster' ? (user?.houseId || '') : '';
   const [cadets, setCadets] = useState([]);
@@ -22,16 +26,16 @@ export default function CadetRecords() {
 
   const limited = isLimitedRole(role);
 
-  const loadCadets = async () => {
-    setLoading(true);
+  const loadCadets = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const data = await api.getCadets({ house: hmHouseId || houseFilter || undefined, className: classFilter || undefined });
       setCadets(data);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -39,6 +43,18 @@ export default function CadetRecords() {
     loadCadets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [houseFilter, classFilter]);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(loadCadets);
+
+  const handleDeleteCadet = async (row) => {
+    try {
+      await api.deleteCadet(row.id);
+      setCadets(prev => prev.filter(c => c.id !== row.id));
+      toast.success(`${row.name} deleted permanently`);
+    } catch {
+      toast.error('Failed to delete cadet record');
+    }
+  };
 
   const table = useTable(cadets, {
     searchKeys: ['name', 'kitNumber', 'houseName', 'className'],
@@ -86,18 +102,24 @@ export default function CadetRecords() {
       sortable: false,
       align: 'right',
       render: (row) => (
-        <Link
-          to={`/cadets/${row.id}`}
-          className="btn-secondary btn-sm inline-flex"
-          aria-label={`View profile of ${row.name}`}
-        >
-          <Eye size={14} /> View
-        </Link>
+        <span className="inline-flex items-center gap-2">
+          <Link
+            to={`/cadets/${row.id}`}
+            className="btn-secondary btn-sm inline-flex"
+            aria-label={`View profile of ${row.name}`}
+          >
+            <Eye size={14} /> View
+          </Link>
+          {role === 'admin' && (
+            <DeleteButton onConfirm={() => handleDeleteCadet(row)} label={`Delete ${row.name} permanently`} />
+          )}
+        </span>
       ),
     });
 
     return base;
-  }, [limited]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limited, role]);
 
   return (
     <div>

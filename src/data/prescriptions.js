@@ -6,7 +6,7 @@
  * consultations and are persisted so they survive refreshes.
  */
 
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const RX_KEY = 'cchms_prescriptions_v1';
 
@@ -24,6 +24,7 @@ function saveRx() {
 }
 
 export const prescriptions = loadRx();
+registerList('prescriptions', prescriptions);
 
 let rxCounter = 100 + prescriptions.length;
 
@@ -70,4 +71,13 @@ export function updatePrescription(id, updates) {
     saveRx();
   }
   return rx;
+}
+
+/** Permanently delete a prescription (synced to every device). */
+export function removePrescription(id) {
+  const i = prescriptions.findIndex(p => p.id === id);
+  if (i === -1) return false;
+  prescriptions.splice(i, 1);
+  saveRx();
+  return true;
 }

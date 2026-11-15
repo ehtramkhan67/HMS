@@ -13,6 +13,8 @@ import { api } from '../utils/api';
 import { medicines } from '../data/medicines';
 import { cadets } from '../data/cadets';
 import { validateForm, isNearExpiry, isExpired, daysUntil, formatDate } from '../utils/helpers';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 export default function Pharmacy() {
   const toast = useToast();
@@ -31,20 +33,32 @@ export default function Pharmacy() {
   const [errors, setErrors] = useState({});
   const pageSize = 12;
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const d = await api.getMedicines();
       setData(d);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteMedicine = async (m) => {
+    try {
+      await api.deleteMedicine(m.id);
+      setData(prev => prev.filter(x => x.id !== m.id));
+      toast.success(`${m.name} removed from inventory permanently`);
+    } catch {
+      toast.error('Failed to delete medicine');
+    }
+  };
 
   const filtered = useMemo(() => {
     let result = data;
@@ -211,6 +225,7 @@ export default function Pharmacy() {
                         {col.label} {sortKey === col.key && (sortDir === 'asc' ? '↑' : '↓')}
                       </th>
                     ))}
+                    <th className="px-4 py-3 font-medium text-slate-500 uppercase tracking-wider text-xs text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -235,6 +250,9 @@ export default function Pharmacy() {
                           {m.stock} <span className="text-xs font-normal text-slate-400">{m.unit}</span>
                         </td>
                         <td className="px-4 py-3 text-slate-500">{m.minStock}</td>
+                        <td className="px-4 py-3 text-right">
+                          <DeleteButton onConfirm={() => handleDeleteMedicine(m)} label="Delete this medicine permanently" />
+                        </td>
                       </tr>
                     );
                   })}

@@ -1,4 +1,4 @@
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 export const houses = [
   { id: 'house-1', name: 'Jinnah House', color: '#042938', shortName: 'JH' },    // Navy Blue
@@ -42,6 +42,7 @@ function saveRegistered(list) {
 }
 
 export const cadets = loadRegistered();
+registerList('registeredCadets', cadets);
 
 function nextCollegeNumber() {
   const used = new Set(cadets.map(c => c.collegeNumber));
@@ -185,6 +186,15 @@ export function updateCadet(id, updates) {
   Object.assign(c, updates);
   saveRegistered(cadets);
   return c;
+}
+
+/** Permanently delete a registered cadet (synced to every device). */
+export function removeCadet(id) {
+  const i = cadets.findIndex(x => x.id === id);
+  if (i === -1) return false;
+  cadets.splice(i, 1);
+  saveRegistered(cadets);
+  return true;
 }
 
 export const getCadetsByHouse = (houseId) => cadets.filter(c => c.houseId === houseId);

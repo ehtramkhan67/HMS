@@ -14,6 +14,8 @@ import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../utils/api';
 import { isNearExpiry, isExpired, formatDate, formatDateTime, timeAgo } from '../utils/helpers';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 /**
  * Physician Portal
@@ -48,8 +50,8 @@ export default function CompounderPortal() {
   const [page, setPage] = useState(1);
   const pageSize = 8;
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [p, d, s] = await Promise.all([
@@ -61,13 +63,27 @@ export default function CompounderPortal() {
       setDispensed(d);
       setStock(s);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteRx = async (rx) => {
+    try {
+      await api.deletePrescription(rx.id);
+      setPending(prev => prev.filter(p => p.id !== rx.id));
+      setDispensed(prev => prev.filter(p => p.id !== rx.id));
+      if (selected?.id === rx.id) { setShowDetail(false); setSelected(null); }
+      toast.success(`${rx.rxNumber} deleted permanently`);
+    } catch {
+      toast.error('Failed to delete prescription');
+    }
+  };
 
   // ── Filtering ──
   const filteredPending = useMemo(() => {
@@ -264,6 +280,7 @@ export default function CompounderPortal() {
                           <button onClick={() => openDispense(rx)} className="btn-primary btn-sm">
                             <CheckCircle2 size={14} /> Dispense
                           </button>
+                          <DeleteButton onConfirm={() => handleDeleteRx(rx)} label="Delete this prescription permanently" />
                         </div>
                       </div>
                     </CardBody>
@@ -405,10 +422,11 @@ export default function CompounderPortal() {
                         </td>
                         <td className="px-4 py-3 text-slate-600 text-xs">{rx.dispensedBy}</td>
                         <td className="px-4 py-3 text-slate-600 text-xs">{formatDateTime(rx.dispensedAt)}</td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                           <button onClick={() => openDetail(rx)} className="btn-secondary btn-sm">
                             <Eye size={14} /> View
                           </button>
+                          <DeleteButton onConfirm={() => handleDeleteRx(rx)} label="Delete this prescription permanently" />
                         </td>
                       </tr>
                     ))}

@@ -19,6 +19,13 @@
 //
 // localStorage remains a fast offline cache; the server is authoritative
 // for everything except collections with unsynced (dirty) local edits.
+//
+// Auto-refresh: startAutoRefresh(30000) re-runs hydrate() every 30 s,
+// applies changed records to the modules' in-memory arrays (registry
+// below) and notifies subscribed pages via useSyncRefresh() so the UI
+// updates live — no manual reload needed.
+
+import { useRef, useEffect } from 'react';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 const DIRTY_KEY = 'cchms_sync_dirty_v1';
@@ -48,6 +55,72 @@ export const COLLECTIONS = [
 ];
 
 const byName = new Map(COLLECTIONS.map(c => [c.name, c]));
+
+// ── in-memory registry (populated by src/data/* at load time) ──
+// Pages read records through the data modules' exported arrays, so a
+// background refresh must update those arrays in place — writing only
+// localStorage would leave every open page showing stale state.
+const registry = new Map(); // name -> { arr } | { apply }
+
+/** Register a plain record array (merged in place by id on refresh). */
+export function registerList(name, arr) {
+  registry.set(name, { arr });
+}
+
+/** Register a custom applier — used by the map-shaped collections. */
+export function registerMap(name, apply) {
+  registry.set(name, { apply });
+}
+
+function applyToMemory(col, merged) {
+  const reg = registry.get(col.name);
+  if (!reg) return;
+  if (reg.apply) { reg.apply(merged); return; }
+  // Id-preserving merge: shared records are updated in place so open
+  // modals/details keep their object identity; the array contents then
+  // exactly mirror the merged server state (adds, updates, deletions).
+  const arr = reg.arr;
+  const byId = new Map();
+  for (const r of arr) if (r && r.id != null) byId.set(String(r.id), r);
+  const next = merged.map(m => {
+    if (!m || m.id == null) return m;
+    const existing = byId.get(String(m.id));
+    if (!existing) return m;
+    for (const k of Object.keys(existing)) if (!(k in m)) delete existing[k];
+    Object.assign(existing, m);
+    return existing;
+  });
+  arr.length = 0;
+  for (const r of next) arr.push(r);
+}
+
+// ── refresh listeners (pages subscribe via useSyncRefresh) ──────
+const syncListeners = new Set();
+
+/** Subscribe to background refreshes that changed data. Returns unsubscribe. */
+export function onSyncRefresh(cb) {
+  syncListeners.add(cb);
+  return () => syncListeners.delete(cb);
+}
+
+function notifyListeners(changed) {
+  for (const cb of [...syncListeners]) {
+    try { cb(changed); } catch (err) { console.warn('[sync] listener failed:', err); }
+  }
+}
+
+/**
+ * React hook: re-run `load` (called with silent=true so pages don't
+ * flash their loading skeletons) whenever a background refresh brings
+ * in new data. The latest `load` closure is always used.
+ */
+export function useSyncRefresh(load) {
+  const ref = useRef(load);
+  ref.current = load;
+  useEffect(() => onSyncRefresh(() => {
+    try { ref.current?.(true); } catch (err) { console.warn('[sync] reload failed:', err); }
+  }), []);
+}
 
 // ── helpers ─────────────────────────────────────────────────────
 
@@ -224,11 +297,17 @@ function mergeMap(col, localMap, serverMap, isDirty) {
 }
 
 /**
- * Pull every collection from the API, merge with local data and write the
- * result to localStorage. Must run before the data modules are imported.
- * Never throws — offline boots fall back to localStorage.
+ * Pull every collection from the API, merge with local data, write the
+ * result to localStorage and mirror it into the registered in-memory
+ * arrays. Must run before the data modules are imported at boot (the
+ * registry is simply empty then). Never throws — offline boots fall back
+ * to localStorage.
+ *
+ * @param {boolean} notify  notify subscribed pages when data changed
+ *                          (used by the background auto-refresh).
+ * @returns {Promise<string[]>} names of collections that changed.
  */
-export async function hydrate() {
+export async function hydrate({ notify = false } = {}) {
   let server;
   try {
     const ctrl = new AbortController();
@@ -239,37 +318,84 @@ export async function hydrate() {
     server = await res.json();
   } catch (err) {
     console.warn('[sync] hydrate skipped (offline or API down):', err.message || err);
-    return false;
+    return [];
   }
 
-  const isDirtyName = (name) => dirty().has(name);
+  const changed = [];
 
   for (const col of COLLECTIONS) {
     try {
       const rows = Array.isArray(server[col.name]) ? server[col.name] : [];
       const local = readLocal(col);
-      const isDirty = isDirtyName(col.name);
+      const isDirty = dirty().has(col.name);
+      const localJson = JSON.stringify(local);
+      let merged = null;
+      let needsPush = false;
 
       if (col.mode === 'map') {
         const serverMap = fromRows(col, rows);
         const localMap = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
-        const { merged, needsPush } = mergeMap(col, localMap, serverMap, isDirty);
         if (local === null && Object.keys(serverMap).length === 0) continue;
-        if (JSON.stringify(local) !== JSON.stringify(merged)) writeLocal(col, merged);
-        if (needsPush) await pushCollection(col, toRows(col, merged));
+        const m = mergeMap(col, localMap, serverMap, isDirty);
+        merged = m.merged;
+        needsPush = m.needsPush;
       } else {
         const serverList = fromRows(col, rows);
         const localList = Array.isArray(local) ? local : null;
         // Nothing on either side yet (e.g. medicines still on the static
         // catalog) — leave localStorage untouched.
         if (localList === null && serverList.length === 0) continue;
-        const { merged, needsPush } = mergeList(col, localList ?? [], serverList, isDirty);
-        if (JSON.stringify(local) !== JSON.stringify(merged)) writeLocal(col, merged);
-        if (needsPush) await pushCollection(col, toRows(col, merged));
+        const m = mergeList(col, localList ?? [], serverList, isDirty);
+        merged = m.merged;
+        needsPush = m.needsPush;
       }
+
+      if (localJson !== JSON.stringify(merged)) {
+        writeLocal(col, merged);
+        applyToMemory(col, merged);
+        changed.push(col.name);
+      }
+      // Local-only edits (migration / failed push / dirty window) go up.
+      if (needsPush) await pushCollection(col, toRows(col, merged));
     } catch (err) {
       console.warn(`[sync] hydrate "${col.name}" failed:`, err.message || err);
     }
   }
-  return true;
+
+  if (changed.length) console.info(`[sync] refreshed: ${changed.join(', ')}`);
+  if (notify && changed.length) notifyListeners(changed);
+  return changed;
+}
+
+// ── 30-second live auto-refresh ─────────────────────────────────
+
+let refreshing = false;
+
+/** Re-pull the server state and push changes into the open UI. */
+export async function refreshFromServer() {
+  if (refreshing) return [];
+  refreshing = true;
+  try {
+    return await hydrate({ notify: true });
+  } finally {
+    refreshing = false;
+  }
+}
+
+let autoTimer = null;
+
+/**
+ * Start polling the backend every `intervalMs` (default 30 s) while the
+ * tab is visible, plus an immediate catch-up when the tab regains focus,
+ * so records entered on another laptop appear on their own.
+ */
+export function startAutoRefresh(intervalMs = 30000) {
+  if (autoTimer != null) return;
+  autoTimer = setInterval(() => {
+    if (document.hidden) return; // background tabs sync on refocus instead
+    refreshFromServer();
+  }, intervalMs);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshFromServer();
+  });
 }

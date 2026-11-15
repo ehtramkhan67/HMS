@@ -11,6 +11,9 @@ import { api } from '../utils/api';
 import { formatDate } from '../utils/helpers';
 import { isLimitedRole } from '../utils/rbac';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 const TABS = [
   { key: 'overview', label: 'Overview', icon: User },
@@ -25,6 +28,7 @@ export default function CadetProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { role } = useAuth();
+  const toast = useToast();
   const [cadet, setCadet] = useState(null);
   const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,26 +37,40 @@ export default function CadetProfile() {
 
   const limited = isLimitedRole(role);
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const [c, v] = await Promise.all([
-          api.getCadet(id),
-          api.getVisitsByCadet(id),
-        ]);
-        if (!c) throw new Error('Cadet not found');
-        setCadet(c);
-        setVisits(v);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
+    try {
+      const [c, v] = await Promise.all([
+        api.getCadet(id),
+        api.getVisitsByCadet(id),
+      ]);
+      if (!c) throw new Error('Cadet not found');
+      setCadet(c);
+      setVisits(v);
+    } catch (err) {
+      if (!silent) setError(err.message);
+    } finally {
+      if (!silent) setLoading(false);
     }
+  };
+
+  useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteVisit = async (v) => {
+    try {
+      await api.deleteVisit(v.id);
+      setVisits(prev => prev.filter(x => x.id !== v.id));
+      toast.success('Visit record deleted permanently');
+    } catch {
+      toast.error('Failed to delete visit');
+    }
+  };
 
   if (loading) return <Loading message="Loading cadet profile…" />;
   if (error) return <ErrorState message={error} onRetry={() => navigate('/cadets')} />;
@@ -122,7 +140,7 @@ export default function CadetProfile() {
         {tab === 'history' && !limited && <HistoryTab cadet={cadet} visits={visits} />}
         {tab === 'allergies' && !limited && <AllergiesTab cadet={cadet} />}
         {tab === 'immunizations' && !limited && <ImmunizationsTab cadet={cadet} />}
-        {tab === 'visits' && !limited && <VisitsTab visits={visits} cadetId={cadet.id} />}
+        {tab === 'visits' && !limited && <VisitsTab visits={visits} cadetId={cadet.id} onDelete={handleDeleteVisit} />}
         {tab === 'guardian' && <GuardianTab cadet={cadet} />}
       </div>
 
@@ -290,7 +308,7 @@ function ImmunizationsTab({ cadet }) {
   );
 }
 
-function VisitsTab({ visits }) {
+function VisitsTab({ visits, onDelete }) {
   if (visits.length === 0) {
     return <EmptyState title="No visits recorded" message="This cadet has not visited the hospital yet." />;
   }
@@ -306,6 +324,7 @@ function VisitsTab({ visits }) {
                 <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Diagnosis</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Doctor</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                <th className="px-5 py-3 text-right text-xs font-medium text-slate-500 uppercase">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -316,6 +335,11 @@ function VisitsTab({ visits }) {
                   <td className="px-5 py-3 text-slate-700">{v.diagnosis?.code && v.diagnosis.code !== '—' ? `${v.diagnosis.code} — ${v.diagnosis.name}` : (v.diagnosis?.name || '—')}</td>
                   <td className="px-5 py-3 text-slate-600">{v.doctor}</td>
                   <td className="px-5 py-3"><StatusBadge status={v.status} /></td>
+                  <td className="px-5 py-3 text-right">
+                    {onDelete && (
+                      <DeleteButton onConfirm={() => onDelete(v)} label="Delete this visit permanently" />
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

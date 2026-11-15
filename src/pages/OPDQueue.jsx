@@ -11,6 +11,8 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../utils/api';
 import { cadets } from '../data/cadets';
 import { validateForm } from '../utils/helpers';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 export default function OPDQueue() {
   const { role } = useAuth();
@@ -24,20 +26,32 @@ export default function OPDQueue() {
 
   const canModify = role === 'admin';
 
-  const loadQueue = async () => {
-    setLoading(true);
+  const loadQueue = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const data = await api.getQueue();
       setQueue(data);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { loadQueue(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(loadQueue);
+
+  const handleDeleteEntry = async (item) => {
+    try {
+      await api.deleteQueueEntry(item.id);
+      setQueue(prev => prev.filter(q => q.id !== item.id));
+      toast.success(`Token #${item.token} deleted permanently`);
+    } catch {
+      toast.error('Failed to delete entry');
+    }
+  };
 
   const grouped = useMemo(() => ({
     waiting: queue.filter(q => q.status === 'Waiting'),
@@ -144,6 +158,7 @@ export default function OPDQueue() {
             items={grouped.waiting}
             canModify={canModify}
             onAdvance={advanceStatus}
+            onDelete={handleDeleteEntry}
             emptyMsg="No one waiting"
           />
           {/* In Consultation */}
@@ -155,6 +170,7 @@ export default function OPDQueue() {
             canModify={canModify}
             onAdvance={advanceStatus}
             onChangeStatus={changeStatus}
+            onDelete={handleDeleteEntry}
             emptyMsg="No one in consultation"
           />
           {/* Done */}
@@ -165,6 +181,7 @@ export default function OPDQueue() {
             items={grouped.done}
             canModify={canModify}
             onChangeStatus={changeStatus}
+            onDelete={handleDeleteEntry}
             emptyMsg="No completed visits yet"
             done
           />
@@ -225,7 +242,7 @@ export default function OPDQueue() {
   );
 }
 
-function QueueColumn({ title, icon: Icon, iconColor, items, canModify, onAdvance, onChangeStatus, emptyMsg, done }) {
+function QueueColumn({ title, icon: Icon, iconColor, items, canModify, onAdvance, onChangeStatus, onDelete, emptyMsg, done }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
@@ -238,8 +255,13 @@ function QueueColumn({ title, icon: Icon, iconColor, items, canModify, onAdvance
           <div className="card p-6 text-center text-sm text-slate-400">{emptyMsg}</div>
         )}
         {items.map(item => (
-          <div key={item.id} className="card p-4">
-            <div className="flex items-start gap-3">
+          <div key={item.id} className="card p-4 relative">
+            {canModify && onDelete && (
+              <div className="absolute top-2 right-2">
+                <DeleteButton onConfirm={() => onDelete(item)} label="Delete this entry permanently" />
+              </div>
+            )}
+            <div className="flex items-start gap-3 pr-8">
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold shrink-0 ${
                 item.status === 'In Consultation' ? 'bg-secondary-500 text-primary-900 font-bold' :
                 item.status === 'Done' ? 'bg-emerald-100 text-emerald-700' :

@@ -4,24 +4,24 @@
 // src/utils/sync.js (cross-device sync).
 // Keep the same function signatures so the rest of the app needs no changes.
 
-import { cadets, getCadetById, searchCadets, registerCadet, clearCadetsBySource, houses, normalizeHouse, recordHouse } from '../data/cadets';
-import { medicines, getLowStockMedicines, getNearExpiryMedicines, saveMedicines } from '../data/medicines';
+import { cadets, getCadetById, searchCadets, registerCadet, clearCadetsBySource, houses, normalizeHouse, recordHouse, removeCadet } from '../data/cadets';
+import { medicines, getLowStockMedicines, getNearExpiryMedicines, saveMedicines, removeMedicine } from '../data/medicines';
 import { addDispenseEntry } from '../data/dispenseLog';
-import { visits, getVisitsByCadet, getRecentVisits, userVisits, addUserVisit, updateUserVisit } from '../data/visits';
-import { admissions, getAdmittedCadets, addAdmission, dischargeAdmission } from '../data/admissions';
-import { labOrders, getPendingLabOrders, saveLabOrders } from '../data/labOrders';
-import { queue, saveQueue } from '../data/queue';
+import { visits, getVisitsByCadet, getRecentVisits, userVisits, addUserVisit, updateUserVisit, removeUserVisit } from '../data/visits';
+import { admissions, getAdmittedCadets, addAdmission, dischargeAdmission, removeAdmission } from '../data/admissions';
+import { labOrders, getPendingLabOrders, saveLabOrders, removeLabOrder } from '../data/labOrders';
+import { queue, saveQueue, removeQueueEntry } from '../data/queue';
 import { allBeds, getBedsByWard, getBedStats, wards, updateBed } from '../data/beds';
 import { activities, addActivity } from '../data/activities';
 import { users, roles, saveUserOverride } from '../data/users';
-import { restDutySlips, saveSlips, refreshSlipStatuses } from '../data/restDutySlips';
-import { fitnessCertificates, admissionMedicals, saveFitnessCertificates, saveAdmissionMedicals } from '../data/fitnessCertificates';
-import { upsertMeasurement, getMeasurementsByYear, clearMeasurements, purgeMeasurements } from '../data/annualMedical';
+import { restDutySlips, saveSlips, refreshSlipStatuses, removeSlip } from '../data/restDutySlips';
+import { fitnessCertificates, admissionMedicals, saveFitnessCertificates, saveAdmissionMedicals, removeFitnessCertificate, removeAdmissionMedical } from '../data/fitnessCertificates';
+import { upsertMeasurement, getMeasurementsByYear, clearMeasurements, purgeMeasurements, removeMeasurement } from '../data/annualMedical';
 import {
   computeIllnessTrendsByHouse, computeWeeklyOPDVisits, computeIllnessTrendsByClass,
   computeMedicineConsumption, computeBedOccupancyTrend, computeDiagnosisDistribution,
 } from '../data/analytics';
-import { prescriptions as prescriptionList, addPrescriptionFromVisit, getPrescriptionById, updatePrescription } from '../data/prescriptions';
+import { prescriptions as prescriptionList, addPrescriptionFromVisit, getPrescriptionById, updatePrescription, removePrescription } from '../data/prescriptions';
 
 // Simulate network latency for realistic loading states
 const delay = (ms = 300) => new Promise(resolve => setTimeout(resolve, ms));
@@ -397,4 +397,30 @@ export const api = {
     await delay(400);
     return saveUserOverride(userId, typeof patch === 'string' ? { role: patch } : patch);
   },
+
+  // ── Permanent deletes ──
+  // Each call removes the record from its collection; the save that
+  // follows re-uploads the collection, so the deletion propagates to
+  // every device (and the database) on the next sync.
+  deleteQueueEntry: async (id) => { await delay(300); return removeQueueEntry(id); },
+  deleteVisit: async (id) => { await delay(300); return removeUserVisit(id); },
+  deleteAdmission: async (id) => {
+    await delay(400);
+    const adm = removeAdmission(id);
+    if (!adm) return false;
+    // A still-admitted record occupies a bed — free it so the ward view
+    // stays consistent after the record is gone.
+    if (adm.status === 'Admitted' && adm.bedId) {
+      updateBed(adm.bedId, { status: 'available', patientId: null, patientName: null, admittedAt: null, diagnosis: null });
+    }
+    return true;
+  },
+  deleteLabOrder: async (id) => { await delay(300); return removeLabOrder(id); },
+  deletePrescription: async (id) => { await delay(300); return removePrescription(id); },
+  deleteSlip: async (id) => { await delay(300); return removeSlip(id); },
+  deleteFitnessCertificate: async (id) => { await delay(300); return removeFitnessCertificate(id); },
+  deleteAdmissionMedical: async (id) => { await delay(300); return removeAdmissionMedical(id); },
+  deleteMeasurement: async (id) => { await delay(300); return removeMeasurement(id); },
+  deleteMedicine: async (id) => { await delay(300); return removeMedicine(id); },
+  deleteCadet: async (id) => { await delay(300); return removeCadet(id); },
 };

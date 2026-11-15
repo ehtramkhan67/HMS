@@ -1,4 +1,4 @@
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const STORAGE_KEY = 'cchms_admissions_v1';
 
@@ -11,6 +11,7 @@ function loadAdmissions() {
 }
 
 export const admissions = loadAdmissions();
+registerList('admissions', admissions);
 
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(admissions)); } catch { /* ignore quota errors */ }
@@ -36,3 +37,12 @@ export function dischargeAdmission(bedId) {
 export const getAdmittedCadets = () => admissions.filter(a => a.status === 'Admitted');
 export const getAdmissionById = (id) => admissions.find(a => a.id === id);
 export const getAdmissionsByCadet = (cadetId) => admissions.filter(a => a.cadetId === cadetId);
+
+/** Permanently delete an admission record (synced to every device). */
+export function removeAdmission(id) {
+  const i = admissions.findIndex(a => a.id === id);
+  if (i === -1) return null;
+  const [removed] = admissions.splice(i, 1);
+  persist();
+  return removed;
+}

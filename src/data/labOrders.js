@@ -27,7 +27,7 @@ const labTests = [
 
 // Orders are persisted so lab data entered by the Lab portal
 // survives refreshes (and feeds dashboards/House Master views).
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const ORDERS_KEY = 'cchms_lab_orders_v1';
 
@@ -40,6 +40,7 @@ function loadOrders() {
 }
 
 export const labOrders = loadOrders();
+registerList('labOrders', labOrders);
 
 export function saveLabOrders() {
   try { localStorage.setItem(ORDERS_KEY, JSON.stringify(labOrders)); } catch { /* ignore quota errors */ }
@@ -50,3 +51,12 @@ export const labTestCatalog = labTests;
 export const getLabOrdersByCadet = (cadetId) => labOrders.filter(l => l.cadetId === cadetId);
 export const getPendingLabOrders = () => labOrders.filter(l => l.status !== 'Completed');
 export const getCompletedLabOrders = () => labOrders.filter(l => l.status === 'Completed');
+
+/** Permanently delete a lab order (synced to every device). */
+export function removeLabOrder(id) {
+  const i = labOrders.findIndex(l => l.id === id);
+  if (i === -1) return false;
+  labOrders.splice(i, 1);
+  saveLabOrders();
+  return true;
+}

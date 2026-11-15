@@ -1,7 +1,7 @@
 // Annual medical test records — height & weight measurement only.
 // One record per cadet per year, persisted across refreshes.
 
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const KEY = 'cchms_annual_medical_v1';
 
@@ -19,6 +19,7 @@ function save() {
 }
 
 export const annualMedical = load();
+registerList('annualMedical', annualMedical);
 
 export function upsertMeasurement({ cadetId, year, height, weight, bmi, measuredBy }) {
   const existing = annualMedical.find(r => r.cadetId === cadetId && r.year === year);
@@ -49,6 +50,15 @@ export function upsertMeasurement({ cadetId, year, height, weight, bmi, measured
 export const getMeasurementsByYear = (year) => annualMedical.filter(r => r.year === year);
 export const getMeasurementForCadet = (cadetId, year) =>
   annualMedical.find(r => r.cadetId === cadetId && r.year === year);
+
+/** Permanently delete one annual measurement (synced to every device). */
+export function removeMeasurement(id) {
+  const i = annualMedical.findIndex(r => r.id === id);
+  if (i === -1) return false;
+  annualMedical.splice(i, 1);
+  save();
+  return true;
+}
 
 export function clearMeasurements() {
   const count = annualMedical.length;

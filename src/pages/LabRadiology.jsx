@@ -14,6 +14,8 @@ import { api } from '../utils/api';
 import { labTestCatalog } from '../data/labOrders';
 import { cadets } from '../data/cadets';
 import { validateForm, formatDate } from '../utils/helpers';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 export default function LabRadiology() {
   const toast = useToast();
@@ -34,20 +36,32 @@ export default function LabRadiology() {
 
   const canModify = ['lab', 'admin'].includes(role);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const d = await api.getLabOrders();
       setOrders(d);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteOrder = async (o) => {
+    try {
+      await api.deleteLabOrder(o.id);
+      setOrders(prev => prev.filter(x => x.id !== o.id));
+      toast.success(`${o.testName} order deleted permanently`);
+    } catch {
+      toast.error('Failed to delete order');
+    }
+  };
 
   const filtered = useMemo(() => {
     let result = orders;
@@ -242,6 +256,7 @@ export default function LabRadiology() {
                         {o.status === 'Completed' && o.result && (
                           <button onClick={() => handleEnterResult(o)} className="btn-secondary btn-sm">View</button>
                         )}
+                        <DeleteButton onConfirm={() => handleDeleteOrder(o)} label="Delete this lab order permanently" />
                       </td>
                     </tr>
                   ))}

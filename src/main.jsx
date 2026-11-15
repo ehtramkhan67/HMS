@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { hydrate, flushSync } from './utils/sync'
+import { hydrate, flushSync, startAutoRefresh } from './utils/sync'
 import './index.css'
 
 // Cross-device sync: pull every collection from the PostgreSQL backend and
@@ -20,4 +20,9 @@ window.addEventListener('pagehide', flushSync)
 
 hydrate()
   .catch(err => console.warn('[sync] hydrate error:', err))
-  .finally(() => import('./root.jsx'))
+  .finally(() => {
+    // Live sync: re-pull the server every 30 s (and on tab refocus) so
+    // records entered on another laptop appear without a manual reload.
+    startAutoRefresh(30000);
+    return import('./root.jsx');
+  })

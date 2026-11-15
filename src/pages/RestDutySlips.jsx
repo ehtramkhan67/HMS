@@ -16,6 +16,8 @@ import { api } from '../utils/api';
 import { cadets, recordHouse } from '../data/cadets';
 import { validateForm, formatDate } from '../utils/helpers';
 import { useKitAutofill } from '../utils/useKitAutofill';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 const slipTypes = [
   { value: 'Rest', label: 'Rest', icon: Moon, description: 'Complete rest from all academic and physical activities' },
@@ -46,20 +48,32 @@ export default function RestDutySlips() {
   // House Masters only view slips from their own house.
   const houseScope = role === 'houseMaster' ? (user?.houseName || '') : '';
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const d = await api.getRestDutySlips();
       setSlips(d);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteSlip = async (s) => {
+    try {
+      await api.deleteSlip(s.id);
+      setSlips(prev => prev.filter(x => x.id !== s.id));
+      toast.success(`Slip for ${s.cadetName} deleted permanently`);
+    } catch {
+      toast.error('Failed to delete slip');
+    }
+  };
 
   // Normalised match: records may store "Ayub" while the user's house
   // is "Ayub House" — recordHouse resolves both (and falls back to
@@ -251,6 +265,7 @@ export default function RestDutySlips() {
                         {s.notifiedHouseMaster && (
                           <Badge variant="success" className="ml-1"><Bell size={10} className="mr-1" /> Notified</Badge>
                         )}
+                        <DeleteButton onConfirm={() => handleDeleteSlip(s)} label="Delete this slip permanently" className="ml-1" />
                       </td>
                     </tr>
                   ))}

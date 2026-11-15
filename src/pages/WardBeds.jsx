@@ -13,6 +13,8 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../utils/api';
 import { validateForm, formatDate } from '../utils/helpers';
 import { useKitAutofill } from '../utils/useKitAutofill';
+import { useSyncRefresh } from '../utils/sync';
+import DeleteButton from '../components/DeleteButton';
 
 export default function WardBeds() {
   const toast = useToast();
@@ -36,8 +38,8 @@ export default function WardBeds() {
   // Kit → cadet name + house autofill (same flow as Consultation).
   useKitAutofill(admitForm, setAdmitForm, { nameKey: 'cadetId', houseKey: 'houseName' });
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [w, b, stats, adm] = await Promise.all([
@@ -48,9 +50,9 @@ export default function WardBeds() {
       setBedStats(stats);
       setAdmissionsList(adm);
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -66,6 +68,18 @@ export default function WardBeds() {
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
+
+  const handleDeleteAdmission = async (a) => {
+    try {
+      await api.deleteAdmission(a.id);
+      await refresh();
+      toast.success(`Admission record for ${a.cadetName} deleted permanently`);
+    } catch {
+      toast.error('Failed to delete admission');
+    }
+  };
 
   const activeAdmission = admissionsList.find(
     a => a.status === 'Admitted' && selectedBed && a.bedId === selectedBed.id
@@ -256,16 +270,19 @@ export default function WardBeds() {
                       <td className="px-4 py-3 text-slate-600">{a.consultant}</td>
                       <td className="px-4 py-3"><StatusBadge status={a.status} /></td>
                       <td className="px-4 py-3 text-right">
-                        {role === 'doctor' ? (
-                          <button
-                            onClick={() => { setSelectedBed({ id: a.bedId, number: a.bedNumber, status: 'occupied' }); setErrors({}); setShowDischarge(true); }}
-                            className="btn-secondary btn-sm"
-                          >
-                            <LogOut size={14} /> Discharge
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-400">—</span>
-                        )}
+                        <div className="flex items-center justify-end gap-2">
+                          {role === 'doctor' ? (
+                            <button
+                              onClick={() => { setSelectedBed({ id: a.bedId, number: a.bedNumber, status: 'occupied' }); setErrors({}); setShowDischarge(true); }}
+                              className="btn-secondary btn-sm"
+                            >
+                              <LogOut size={14} /> Discharge
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                          <DeleteButton onConfirm={() => handleDeleteAdmission(a)} label="Delete this admission permanently" />
+                        </div>
                       </td>
                     </tr>
                   ))}

@@ -2,7 +2,7 @@
 // No mock visits — everything here is created through the app and
 // persisted so it survives refreshes.
 
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const USER_VISITS_KEY = 'cchms_user_visits_v1';
 
@@ -21,6 +21,9 @@ function saveUserVisits() {
 
 export const userVisits = loadUserVisits();
 
+// Live auto-refresh: keep this array in sync when the server changes.
+registerList('visits', userVisits);
+
 // Kept for compatibility with older mock references.
 export const visits = [];
 
@@ -37,6 +40,15 @@ export function updateUserVisit(id, updates) {
     saveUserVisits();
   }
   return v;
+}
+
+/** Permanently delete a visit record (synced to every device). */
+export function removeUserVisit(id) {
+  const i = userVisits.findIndex(x => x.id === id);
+  if (i === -1) return false;
+  userVisits.splice(i, 1);
+  saveUserVisits();
+  return true;
 }
 
 export const getVisitsByCadet = (cadetId) =>

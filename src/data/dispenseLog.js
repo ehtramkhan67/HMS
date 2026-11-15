@@ -2,7 +2,7 @@
 // page (outside a prescription flow). Persisted + synced like every
 // other collection so the log is the same on every device.
 
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const KEY = 'cchms_dispense_log_v1';
 const MAX_ENTRIES = 500;
@@ -16,6 +16,7 @@ function load() {
 }
 
 export const dispenseLog = load();
+registerList('dispenseLog', dispenseLog);
 
 export function saveDispenseLog() {
   try { localStorage.setItem(KEY, JSON.stringify(dispenseLog)); } catch { /* ignore quota errors */ }

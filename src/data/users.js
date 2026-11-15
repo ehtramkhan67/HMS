@@ -1,4 +1,4 @@
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerMap } from '../utils/sync';
 
 export const roles = {
   doctor: {
@@ -81,3 +81,14 @@ export function saveUserOverride(userId, patch) {
   schedulePush('userOverrides');
   return u;
 }
+
+// Live auto-refresh: replace the override map and re-apply it so role
+// changes made in Settings on another device show up immediately.
+registerMap('userOverrides', (merged) => {
+  for (const k of Object.keys(userOverrides)) delete userOverrides[k];
+  Object.assign(userOverrides, merged);
+  users.forEach(u => {
+    const o = merged[u.id];
+    if (o) Object.assign(u, o);
+  });
+});

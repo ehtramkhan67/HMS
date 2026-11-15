@@ -1,4 +1,4 @@
-import { schedulePush } from '../utils/sync';
+import { schedulePush, registerList } from '../utils/sync';
 
 const STORAGE_KEY = 'cchms_medicines_v1';
 
@@ -44,10 +44,20 @@ function loadMedicines() {
 
 // A synced copy (stock edited on any device) wins over the static catalog.
 export const medicines = loadMedicines() || DEFAULT_MEDICINES;
+registerList('medicines', medicines);
 
 export function saveMedicines() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(medicines)); } catch { /* ignore quota errors */ }
   schedulePush('medicines');
+}
+
+/** Permanently remove a medicine from inventory (synced to every device). */
+export function removeMedicine(id) {
+  const i = medicines.findIndex(m => m.id === id);
+  if (i === -1) return false;
+  medicines.splice(i, 1);
+  saveMedicines();
+  return true;
 }
 
 export const getMedicineById = (id) => medicines.find(m => m.id === id);

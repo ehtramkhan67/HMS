@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../utils/api';
 import { roles } from '../data/users';
 import { formatDateTime } from '../utils/helpers';
+import { useSyncRefresh } from '../utils/sync';
 
 // Admin can assign only these roles (Admin & House Master are not selectable).
 const ASSIGNABLE_ROLES = ['doctor', 'compounder', 'pharmacist', 'lab'];
@@ -37,20 +38,22 @@ export default function SettingsPage() {
   const [newName, setNewName] = useState('');
   const pageSize = 10;
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const d = await api.getUsers();
       setUsers(d.filter(u => !HIDDEN_USER_ROLES.includes(u.role)));
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
+  // Live sync: re-render with fresh data when another device changes it.
+  useSyncRefresh(load);
 
   const filtered = useMemo(() => {
     let result = users;
